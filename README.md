@@ -23,6 +23,15 @@ cd rust-crawler
 cargo run
 ```
 
+## 3. Quick Start (Python Legacy)
+```bash
+cd python-crawler
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload
+```
+
 ## 2. Server Access (AWS)
 - **Instance Name**: `sg crawling`
 - **Region**: `ap-southeast-1` (Singapore)

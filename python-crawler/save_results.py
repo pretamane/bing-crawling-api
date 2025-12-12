@@ -7,7 +7,7 @@ import os
 
 # Configuration
 BASE_URL = "http://13.229.251.25:8000"  # Your AWS Instance IP
-OUTPUT_DIR = "/home/guest/tzdump"
+OUTPUT_DIR = "./crawled_data"
 
 def save_data(data, keyword):
     """Saves the crawled data to JSON, CSV, and Text files."""
