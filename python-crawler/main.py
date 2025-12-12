@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from crawler import process_crawl_task
 from database import init_db, get_db, Task
 
-app = FastAPI()
+app = FastAPI(docs_url=None, redoc_url=None)
 
 # Initialize DB on startup
 init_db()
