@@ -7,29 +7,38 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 use crate::crawler;
+use utoipa::{ToSchema, OpenApi};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct CrawlRequest {
+    #[schema(example = "rust programming")]
     pub keyword: String,
+    #[schema(example = "bing", default = "bing")]
     pub engine: Option<String>, 
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct CrawlResponse {
+    #[schema(example = "d31d37a9-b82d-415c-9b57-b266287c37b4")]
     pub task_id: String,
+    #[schema(example = "Crawl started")]
     pub message: String,
 }
 
-#[derive(Serialize, sqlx::FromRow)]
+#[derive(Serialize, sqlx::FromRow, ToSchema)]
 pub struct TaskResult {
+    #[schema(example = "d31d37a9-b82d-415c-9b57-b266287c37b4")]
     pub id: String,
+    #[schema(example = "rust programming")]
     pub keyword: String,
+    #[schema(example = "bing")]
     pub engine: String,
+    #[schema(example = "completed")]
     pub status: String,
     pub results_json: Option<String>,
     pub extracted_text: Option<String>,
@@ -39,6 +48,14 @@ pub struct TaskResult {
     pub meta_date: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/crawl",
+    request_body = CrawlRequest,
+    responses(
+        (status = 200, description = "Crawl started successfully", body = CrawlResponse)
+    )
+)]
 pub async fn trigger_crawl(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CrawlRequest>,
@@ -71,8 +88,8 @@ pub async fn trigger_crawl(
                 let results_json = serde_json::to_string(&results).unwrap_or_default();
 
                 // 3. Save to Disk (User Requirement)
-                let storage_path = "/home/guest/tzdump/crawl-results";
-                if let Err(e) = std::fs::create_dir_all(storage_path) {
+                let storage_path = std::env::var("STORAGE_PATH").unwrap_or_else(|_| "crawl-results".to_string());
+                if let Err(e) = std::fs::create_dir_all(&storage_path) {
                     eprintln!("Failed to create storage dir: {}", e);
                 }
 
@@ -136,6 +153,16 @@ pub async fn trigger_crawl(
     })
 }
 
+#[utoipa::path(
+    get,
+    path = "/crawl/{task_id}",
+    params(
+        ("task_id" = String, Path, description = "Task ID")
+    ),
+    responses(
+        (status = 200, description = "Crawl status/results", body = Option<TaskResult>)
+    )
+)]
 pub async fn get_crawl_status(
     State(state): State<Arc<AppState>>,
     Path(task_id): Path<String>,
@@ -149,4 +176,89 @@ pub async fn get_crawl_status(
     .unwrap_or(None);
 
     Json(rec)
+}
+
+// ============================================================================
+// Proxy Management API
+// ============================================================================
+
+use crate::proxy::{PROXY_MANAGER, ProxyInfo, ProxyStats};
+
+/// List all proxies with their health status
+pub async fn list_proxies() -> Json<Vec<ProxyInfo>> {
+    Json(PROXY_MANAGER.list_proxies())
+}
+
+/// Add a new proxy at runtime
+#[derive(Deserialize)]
+pub struct AddProxyRequest {
+    /// Proxy string: host:port or user:pass@host:port
+    pub proxy: String,
+}
+
+#[derive(Serialize)]
+pub struct AddProxyResponse {
+    pub success: bool,
+    pub proxy: Option<ProxyInfo>,
+    pub error: Option<String>,
+}
+
+pub async fn add_proxy(
+    Json(payload): Json<AddProxyRequest>,
+) -> Json<AddProxyResponse> {
+    match PROXY_MANAGER.add_proxy(&payload.proxy) {
+        Ok(info) => Json(AddProxyResponse {
+            success: true,
+            proxy: Some(info),
+            error: None,
+        }),
+        Err(e) => Json(AddProxyResponse {
+            success: false,
+            proxy: None,
+            error: Some(e),
+        }),
+    }
+}
+
+/// Remove a proxy by ID
+#[derive(Serialize)]
+pub struct RemoveProxyResponse {
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+pub async fn remove_proxy(
+    Path(proxy_id): Path<String>,
+) -> Json<RemoveProxyResponse> {
+    match PROXY_MANAGER.remove_proxy(&proxy_id) {
+        Ok(()) => Json(RemoveProxyResponse {
+            success: true,
+            error: None,
+        }),
+        Err(e) => Json(RemoveProxyResponse {
+            success: false,
+            error: Some(e),
+        }),
+    }
+}
+
+/// Re-enable a disabled proxy
+pub async fn enable_proxy(
+    Path(proxy_id): Path<String>,
+) -> Json<RemoveProxyResponse> {
+    match PROXY_MANAGER.enable_proxy(&proxy_id) {
+        Ok(()) => Json(RemoveProxyResponse {
+            success: true,
+            error: None,
+        }),
+        Err(e) => Json(RemoveProxyResponse {
+            success: false,
+            error: Some(e),
+        }),
+    }
+}
+
+/// Get aggregate proxy stats
+pub async fn proxy_stats() -> Json<ProxyStats> {
+    Json(PROXY_MANAGER.get_stats())
 }

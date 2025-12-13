@@ -1,0 +1,3 @@
+thaw-zin-2k77.de5.net {
+    reverse_proxy crawler:3000
+}

@@ -1,1 +1,18 @@
+# Build artifacts
 /target
+
+# Debug output
+/debug/
+*.html
+*.png
+
+# Logs
+/logs/
+*.log
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/

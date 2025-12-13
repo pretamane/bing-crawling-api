@@ -5,41 +5,21 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use std::time::Duration;
 use tokio::time::sleep;
-
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
 use once_cell::sync::Lazy;
 
-// Global Proxy Manager
-static PROXY_MANAGER: Lazy<ProxyManager> = Lazy::new(|| {
-    ProxyManager::new(vec![
-        // Add your proxies here: "scheme://ip:port"
-        // "socks5://127.0.0.1:9050".to_string(), // Tor example
-        // "http://user:pass@1.2.3.4:8080".to_string(),
-    ])
+// Import from new proxy module
+use crate::proxy::{PROXY_MANAGER, generate_proxy_auth_extension};
+
+static USER_AGENTS: Lazy<Vec<&'static str>> = Lazy::new(|| {
+    vec![
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/123.0.0.0 Safari/537.36",
+    ]
 });
-
-struct ProxyManager {
-    proxies: Vec<String>,
-    current_index: AtomicUsize,
-}
-
-impl ProxyManager {
-    fn new(proxies: Vec<String>) -> Self {
-        Self {
-            proxies,
-            current_index: AtomicUsize::new(0),
-        }
-    }
-
-    fn get_next_proxy(&self) -> Option<String> {
-        if self.proxies.is_empty() {
-            return None;
-        }
-        let index = self.current_index.fetch_add(1, Ordering::SeqCst) % self.proxies.len();
-        Some(self.proxies[index].clone())
-    }
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SearchResult {
@@ -58,9 +38,15 @@ pub struct ExtractedContent {
 }
 
 pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
+    use rand::seq::SliceRandom;
+    // Select a random User-Agent
+    let user_agent = USER_AGENTS.choose(&mut rand::thread_rng())
+        .unwrap_or(&"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36");
+    
+    println!("Using User-Agent: {}", user_agent);
+
     // Use anonymous/incognito mode (no profile persistence)
     let mut args = vec![
-        std::ffi::OsStr::new("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"),
         std::ffi::OsStr::new("--disable-blink-features=AutomationControlled"),
         std::ffi::OsStr::new("--no-sandbox"),
         std::ffi::OsStr::new("--disable-dev-shm-usage"),
@@ -69,13 +55,34 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
         std::ffi::OsStr::new("--ignore-certificate-errors"),
         std::ffi::OsStr::new("--ignore-certificate-errors-spki-list"),
     ];
+    let ua_arg = format!("--user-agent={}", user_agent);
+    args.push(std::ffi::OsStr::new(&ua_arg));
 
-    // Add proxy if available
-    let proxy_arg; // Keep alive
-    if let Some(proxy) = PROXY_MANAGER.get_next_proxy() {
-        println!("Using proxy: {}", proxy);
-        proxy_arg = format!("--proxy-server={}", proxy);
+    // Add proxy if available (using new ProxyManager)
+    let proxy_arg: String;
+    let ext_arg: String;
+    let current_proxy = PROXY_MANAGER.get_next_proxy();
+    let _proxy_id = current_proxy.as_ref().map(|p| p.id.clone());
+    
+    if let Some(ref proxy) = current_proxy {
+        println!("🔄 Using proxy: {} (healthy: {}, success_rate: {:.1}%)", 
+            proxy.id, 
+            proxy.healthy.load(std::sync::atomic::Ordering::Relaxed),
+            proxy.success_rate() * 100.0
+        );
+        proxy_arg = format!("--proxy-server={}", proxy.to_chrome_arg());
         args.push(std::ffi::OsStr::new(&proxy_arg));
+        
+        // Add auth extension if proxy requires authentication
+        if proxy.requires_auth() {
+            let ext_path = generate_proxy_auth_extension(
+                proxy.username.as_ref().unwrap(),
+                proxy.password.as_ref().unwrap()
+            );
+            ext_arg = format!("--load-extension={}", ext_path);
+            args.push(std::ffi::OsStr::new(&ext_arg));
+            println!("🔐 Proxy auth extension loaded");
+        }
     }
 
     let browser = Browser::new(LaunchOptions {
@@ -89,6 +96,7 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
 
     // Layer 1: Device & Environment Fingerprinting (JS-Level)
     // Inject stealth scripts to run before any other script on the page
+    // Inject stealth scripts to run before any other script on the page
     let stealth_script = r#"
         // 1. Remove navigator.webdriver
         Object.defineProperty(navigator, 'webdriver', {
@@ -100,34 +108,52 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
             get: () => 4,
         });
 
-        // 3. Canvas Noise (Simple Perlin-like jitter)
+        // 3. Canvas Noise (Perlin-like jitter)
         const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
         HTMLCanvasElement.prototype.toDataURL = function(...args) {
-            // Add subtle noise if it's a fingerprinting attempt (heuristics could be added here)
-            // For now, we just call original to avoid breaking valid images, 
-            // but in a real Tier 1, we'd manipulate the context data slightly before this.
+            if (this.width > 0 && this.height > 0) {
+                const context = this.getContext('2d');
+                if (context) {
+                    const imageData = context.getImageData(0, 0, this.width, this.height);
+                    for (let i = 0; i < this.height; i++) {
+                        for (let j = 0; j < this.width; j++) {
+                            const index = ((i * (this.width * 4)) + (j * 4));
+                            // Add subtle noise to alpha channel
+                            if (imageData.data[index + 3] > 0) {
+                                imageData.data[index + 3] = Math.max(0, Math.min(255, imageData.data[index + 3] + (Math.random() > 0.5 ? 1 : -1)));
+                            }
+                        }
+                    }
+                    context.putImageData(imageData, 0, 0);
+                }
+            }
             return originalToDataURL.apply(this, args);
         };
         
-        // 4. WebGL Vendor Spoofing (Basic)
+        // 4. WebGL Vendor Spoofing
         const getParameter = WebGLRenderingContext.prototype.getParameter;
         WebGLRenderingContext.prototype.getParameter = function(parameter) {
             // UNMASKED_VENDOR_WEBGL
-            if (parameter === 37445) {
-                return 'Intel Inc.';
-            }
+            if (parameter === 37445) return 'Intel Inc.';
             // UNMASKED_RENDERER_WEBGL
-            if (parameter === 37446) {
-                return 'Intel Iris OpenGL Engine';
-            }
+            if (parameter === 37446) return 'Intel Iris OpenGL Engine';
             return getParameter.apply(this, [parameter]);
         };
         
         // 5. Chrome Runtime (Mocking)
         window.chrome = {
             runtime: {},
-            // Add other chrome properties as needed
+            loadTimes: function() {},
+            csi: function() {},
+            app: {}
         };
+
+        // 6. Block WebRTC (prevent IP leaks)
+        ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection', 'msRTCPeerConnection'].forEach(className => {
+             if (window[className]) {
+                 window[className] = undefined;
+             }
+        });
     "#;
 
     // Enable Page domain to use addScriptToEvaluateOnNewDocument
@@ -148,7 +174,15 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
     let search_box = tab.wait_for_element("input[name='q']")?;
     search_box.click()?;
     
-    println!("Typing query...");
+    // Clear any existing content (important for fresh search)
+    println!("Clearing search box...");
+    tab.evaluate(r#"
+        const input = document.querySelector('input[name="q"]');
+        if (input) { input.value = ''; input.focus(); }
+    "#, false)?;
+    sleep(Duration::from_millis(200)).await;
+    
+    println!("Typing query: {}...", keyword);
     for char in keyword.chars() {
         tab.type_str(&char.to_string())?;
         // Random typing delay (80-200ms)
@@ -184,26 +218,25 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
     
     sleep(Duration::from_millis(500)).await;
 
-    // Gradual Scroll with pauses
+    // Light scroll simulation (non-blocking, limited scroll)
     let _ = tab.evaluate(r#"
-        async function humanScroll() {
-            const totalHeight = document.body.scrollHeight;
-            let distance = 100;
+        (function() {
             let scrolled = 0;
-            while(scrolled < totalHeight) {
-                window.scrollBy(0, distance);
-                scrolled += distance;
-                // Random pause between scrolls
-                await new Promise(r => setTimeout(r, 100 + Math.random() * 300));
-            }
-            // Scroll back up a bit
-            window.scrollBy(0, -200);
-        }
-        humanScroll();
-    "#, true)?; // await_promise = true
+            const interval = setInterval(() => {
+                window.scrollBy(0, 100);
+                scrolled += 100;
+                if (scrolled > 500) {
+                    clearInterval(interval);
+                    window.scrollBy(0, -200);
+                }
+            }, 150);
+        })();
+    "#, false)?;  // Non-blocking
     
-    // Wait for JavaScript to render results (same as Google fix)
+    // Wait for JavaScript to render results
     println!("Waiting for Bing DOM mutations to complete...");
+    sleep(Duration::from_secs(2)).await;  // Simple wait for page to settle
+    
     let wait_script = r#"
         new Promise((resolve) => {
             let timeout;
@@ -214,13 +247,13 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
                 timeout = setTimeout(() => {
                     observer.disconnect();
                     resolve("mutations_complete");
-                }, 1000);
+                }, 500);  // Reduced from 1000ms
             });
             observer.observe(document.body, { childList: true, subtree: true });
             setTimeout(() => {
                 observer.disconnect();
                 resolve("timeout_reached");
-            }, 8000);
+            }, 3000);  // Reduced from 8000ms
         });
     "#;
     let wait_result = tab.evaluate(wait_script, true)?;
@@ -234,8 +267,8 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
         None,
         true
     ) {
-        let _ = std::fs::write("debug_bing_screenshot.png", &screenshot);
-        println!("Screenshot saved to debug_bing_screenshot.png");
+        let _ = std::fs::write("debug/debug_bing_screenshot.png", &screenshot);
+        println!("Screenshot saved to debug/debug_bing_screenshot.png");
     }
 
     let html_content = tab.get_content()?;
@@ -281,7 +314,7 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
     
     if is_challenge {
         eprintln!("⚠️ CHALLENGE DETECTED: Bing served CAPTCHA/challenge page");
-        let _ = std::fs::write("debug_bing_challenge.html", &html_content);
+        let _ = std::fs::write("debug/debug_bing_challenge.html", &html_content);
     }
     
     if results.is_empty() {
@@ -294,7 +327,7 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
         };
         
         eprintln!("Bing returned 0 results. Reason: {}, HTML len: {}", failure_reason, html_content.len());
-        let _ = std::fs::write("debug_bing_tier1.html", &html_content);
+        let _ = std::fs::write("debug/debug_bing_tier1.html", &html_content);
         
         // Log failure for metrics
         let log_entry = format!(
@@ -307,7 +340,7 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
         let _ = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open("crawl_failures.log")
+            .open("logs/crawl_failures.log")
             .and_then(|mut f| std::io::Write::write_all(&mut f, log_entry.as_bytes()));
     }
 
@@ -315,9 +348,15 @@ pub async fn search_bing(keyword: &str) -> Result<Vec<SearchResult>> {
 }
 
 pub async fn search_google(keyword: &str) -> Result<Vec<SearchResult>> {
+    use rand::seq::SliceRandom;
+    // Select a random User-Agent
+    let user_agent = USER_AGENTS.choose(&mut rand::thread_rng())
+        .unwrap_or(&"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36");
+    
+    println!("Using User-Agent: {}", user_agent);
+
     // Use anonymous/incognito mode (no profile persistence)
     let mut args = vec![
-        std::ffi::OsStr::new("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"),
         std::ffi::OsStr::new("--disable-blink-features=AutomationControlled"),
         std::ffi::OsStr::new("--no-sandbox"),
         std::ffi::OsStr::new("--disable-dev-shm-usage"),
@@ -326,13 +365,34 @@ pub async fn search_google(keyword: &str) -> Result<Vec<SearchResult>> {
         std::ffi::OsStr::new("--ignore-certificate-errors"),
         std::ffi::OsStr::new("--ignore-certificate-errors-spki-list"),
     ];
+    let ua_arg = format!("--user-agent={}", user_agent);
+    args.push(std::ffi::OsStr::new(&ua_arg));
 
-    // Add proxy if available
-    let proxy_arg; // Keep alive
-    if let Some(proxy) = PROXY_MANAGER.get_next_proxy() {
-        println!("Using proxy: {}", proxy);
-        proxy_arg = format!("--proxy-server={}", proxy);
+    // Add proxy if available (using new ProxyManager)
+    let proxy_arg: String;
+    let ext_arg: String;
+    let current_proxy = PROXY_MANAGER.get_next_proxy();
+    let _proxy_id = current_proxy.as_ref().map(|p| p.id.clone());
+    
+    if let Some(ref proxy) = current_proxy {
+        println!("🔄 Using proxy: {} (healthy: {}, success_rate: {:.1}%)", 
+            proxy.id, 
+            proxy.healthy.load(std::sync::atomic::Ordering::Relaxed),
+            proxy.success_rate() * 100.0
+        );
+        proxy_arg = format!("--proxy-server={}", proxy.to_chrome_arg());
         args.push(std::ffi::OsStr::new(&proxy_arg));
+        
+        // Add auth extension if proxy requires authentication
+        if proxy.requires_auth() {
+            let ext_path = generate_proxy_auth_extension(
+                proxy.username.as_ref().unwrap(),
+                proxy.password.as_ref().unwrap()
+            );
+            ext_arg = format!("--load-extension={}", ext_path);
+            args.push(std::ffi::OsStr::new(&ext_arg));
+            println!("🔐 Proxy auth extension loaded");
+        }
     }
 
     let browser = Browser::new(LaunchOptions {
@@ -345,18 +405,40 @@ pub async fn search_google(keyword: &str) -> Result<Vec<SearchResult>> {
     let tab = browser.new_tab()?;
 
     // Layer 1: Device & Environment Fingerprinting (JS-Level)
+    // Layer 1: Device & Environment Fingerprinting (JS-Level)
     let stealth_script = r#"
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
+        
+        // Canvas Noise
         const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-        HTMLCanvasElement.prototype.toDataURL = function(...args) { return originalToDataURL.apply(this, args); };
+        HTMLCanvasElement.prototype.toDataURL = function(...args) {
+             if (this.width > 0 && this.height > 0) {
+                const context = this.getContext('2d');
+                if (context) {
+                    const imageData = context.getImageData(0, 0, this.width, this.height);
+                    // Single pixel alpha modification for speed
+                    if (imageData.data.length > 3) {
+                         imageData.data[3] = Math.max(0, Math.min(255, imageData.data[3] + (Math.random() > 0.5 ? 1 : -1)));
+                         context.putImageData(imageData, 0, 0);
+                    }
+                }
+            }
+            return originalToDataURL.apply(this, args); 
+        };
+
         const getParameter = WebGLRenderingContext.prototype.getParameter;
         WebGLRenderingContext.prototype.getParameter = function(parameter) {
             if (parameter === 37445) return 'Intel Inc.';
             if (parameter === 37446) return 'Intel Iris OpenGL Engine';
             return getParameter.apply(this, [parameter]);
         };
-        window.chrome = { runtime: {} };
+        window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+        
+        // Block WebRTC
+        ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection', 'msRTCPeerConnection'].forEach(className => {
+             if (window[className]) window[className] = undefined;
+        });
     "#;
 
     tab.enable_debugger()?;
@@ -407,8 +489,8 @@ pub async fn search_google(keyword: &str) -> Result<Vec<SearchResult>> {
         None,
         true
     ) {
-        let _ = std::fs::write("debug_google_screenshot.png", &screenshot);
-        println!("Screenshot saved to debug_google_screenshot.png");
+        let _ = std::fs::write("debug/debug_google_screenshot.png", &screenshot);
+        println!("Screenshot saved to debug/debug_google_screenshot.png");
     }
 
     // 2. Type Query (Layer 3: Typing Speed)
@@ -421,8 +503,16 @@ pub async fn search_google(keyword: &str) -> Result<Vec<SearchResult>> {
     
     search_box.click()?;
     
+    // Clear any existing content (important for fresh search)
+    println!("Clearing search box...");
+    tab.evaluate(r#"
+        const input = document.querySelector('textarea[name="q"]') || document.querySelector('input[name="q"]');
+        if (input) { input.value = ''; input.focus(); }
+    "#, false)?;
+    sleep(Duration::from_millis(200)).await;
+    
     // Type query naturally for personalized results (profile-based)
-    println!("Typing query...");
+    println!("Typing query: {}...", keyword);
     for char in keyword.chars() {
         tab.type_str(&char.to_string())?;
         sleep(Duration::from_millis(80 + (rand::random::<u64>() % 120))).await;
@@ -669,7 +759,7 @@ pub async fn search_google(keyword: &str) -> Result<Vec<SearchResult>> {
     if results.is_empty() {
         let html_content = tab.get_content().unwrap_or_default();
         eprintln!("Google returned 0 results. HTML len: {}", html_content.len());
-        let _ = std::fs::write("debug_google_tier1.html", &html_content);
+        let _ = std::fs::write("debug/debug_google_tier1.html", &html_content);
     }
 
     Ok(results)
@@ -681,13 +771,19 @@ pub async fn extract_content(url: &str) -> Result<ExtractedContent> {
     println!("Extracting content from: {}", actual_url);
     
     // Use proper User-Agent and follow redirects
+    use rand::seq::SliceRandom;
+    let user_agent = USER_AGENTS.choose(&mut rand::thread_rng())
+        .unwrap_or(&"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36");
+
     let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+        .user_agent(*user_agent)
         .redirect(reqwest::redirect::Policy::limited(10))
         .timeout(Duration::from_secs(30))
         .build()?;
     
-    let resp = client.get(&actual_url).send().await?;
+    let resp: reqwest::Response = client.get(&actual_url)
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .send().await?;
     let final_url = resp.url().to_string();
     println!("Final URL after redirects: {}", final_url);
     
