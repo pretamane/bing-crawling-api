@@ -1,144 +1,144 @@
-# Bing Crawling API - Developer Handoff
+# Rust Crawler
 
-## 1. Project Overview
-This repository contains two implementations of the Bing Crawler:
+Production-grade web crawler with **Google** and **Bing** search support, featuring proxy rotation, stealth mode, and true deep data extraction using Headless Chrome.
 
-### 📂 `rust-crawler/` (Recommended)
-The new, high-performance **Rust** implementation.
-- **Features**: PostgreSQL storage, Headless Chrome scraping, Axum API.
-- **Status**: Active Development / Production Ready.
+## Features
 
-### 📂 `python-crawler/` (Legacy)
-The original **Python** implementation.
-- **Features**: SQLite storage, Trafilatura extraction, FastAPI.
-- **Status**: Maintenance Mode.
+### Core Capabilities
+- ✅ **Google & Bing Search** - First page results with exact match/verbatim support
+- ✅ **True Deep Crawl** - Uses Headless Chrome for **both** SERP and target website extraction (executes JS, bypasses Cloudflare)
+- ✅ **Resilient Extraction** - Automatic retries (up to 3x) for Google blocks/CAPTCHAs
+- ✅ **Rich Data Extraction** - Captures:
+  - Main Text (Readability + Fallbacks)
+  - Metadata (Description, Authors, Keywords)
+  - Schema.org (JSON-LD)
+  - Open Graph Tags
+  - Emails & Phone Numbers
+  - Images & Outbound Links
+- ✅ **Stealth Mode** - Bypasses webdriver detection, canvas fingerprinting, WebGL
 
-## 2. Quick Start (Rust)
+### Dashboard 📊
+- **Visual Interface**: Dark-themed dashboard at [`http://localhost:3000`](http://localhost:3000)
+- **Live Monitoring**: View crawl status, results, and extract details in real-time.
+
+### Proxy Rotation (Production-Grade)
+- ✅ **Authenticated proxies** - Support for `user:pass@host:port` format
+- ✅ **4 Rotation Strategies** - RoundRobin, LeastUsed, Random, Weighted
+- ✅ **Health tracking** - Auto-disables proxies after consecutive failures
+- ✅ **Runtime management** - Add/remove/enable proxies via API
+
+---
+
+## Quick Start
+
+### 1. Environment Setup
 ```bash
-# Start Database
-docker-compose up -d
+cp .env.example .env
+# Edit .env with your DATABASE_URL
+```
 
-# Run Crawler
+### 2. Run with Docker Compose
+```bash
+cd /home/guest/tzdump/crawling
+docker-compose up -d
+```
+
+### 3. Run Locally (Development)
+```bash
 cd rust-crawler
+source .env
 cargo run
 ```
 
-## 3. Quick Start (Python Legacy)
+### 4. Access Dashboard
+Open your browser to: **`http://localhost:3000`**
+
+### 5. API Testing
 ```bash
-cd python-crawler
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-uvicorn main:app --reload
+# Bing Search
+curl -X POST http://localhost:3000/crawl \
+  -H "Content-Type: application/json" \
+  -d '{"keyword": "Top 5 Dota2 Players", "engine": "bing"}'
+
+# Google Search (now with properties Retry)
+curl -X POST http://localhost:3000/crawl \
+  -H "Content-Type: application/json" \
+  -d '{"keyword": "Top 5 Dota2 Players", "engine": "google"}'
 ```
 
-## 2. Server Access (AWS)
-- **Instance Name**: `sg crawling`
-- **Region**: `ap-southeast-1` (Singapore)
-- **Public IP**: `13.229.251.25`
-- **SSH User**: `ubuntu`
-- **Key File**: `sg-crawling-key.pem` (Located in project root)
+---
 
-### SSH Connection
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DATABASE_URL` | PostgreSQL connection string | Required |
+| `PROXY_LIST` | Comma-separated proxies | (empty = direct) |
+| `PROXY_ROTATION` | roundrobin, leastused, random, weighted | roundrobin |
+| `PROXY_MAX_FAILS` | Failures before proxy disabled | 3 |
+
+### Proxy Format Examples
 ```bash
-ssh -i sg-crawling-key.pem ubuntu@13.229.251.25
+# Simple
+PROXY_LIST="proxy1.com:8080,proxy2.com:3128"
+
+# With authentication
+PROXY_LIST="user:pass@premium-proxy.com:8080,user2:pass2@backup.com:3128"
 ```
 
-## 3. Deployment Architecture
-- **Container**: Dockerized FastAPI app running on port `8000`.
-- **Reverse Proxy**: **Caddy** handles HTTPS and forwards requests to port `8000`.
-- **SSL**: Automatic SSL via Let's Encrypt (managed by Caddy).
-- **Database**: SQLite file inside the container (mounted volume recommended for persistence in future).
+---
 
-### Service Status
-- **Swagger UI**: [https://13.229.251.25.nip.io/docs](https://13.229.251.25.nip.io/docs)
-- **ReDoc**: [https://13.229.251.25.nip.io/redoc](https://13.229.251.25.nip.io/redoc)
+## Data Structure
 
-## 4. API Reference
+The crawler stores rich JSON data in the database.
 
-### `POST /crawl`
-Triggers a background crawl task.
-
-**Request**:
+### Crawl Result JSON (`results_json`)
 ```json
 {
-  "keyword": "best street food in singapore"
-}
-```
-
-**Response**:
-```json
-{
-  "task_id": "550e8400-e29b-41d4-a716-446655440000",
-  "message": "Crawl started"
-}
-```
-
-### `GET /crawl/{task_id}`
-Retrieves the status and results of a task.
-
-**Response (Completed)**:
-```json
-{
-  "status": "completed",
-  "keyword": "best street food in singapore",
-  "created_at": "2025-12-11T10:00:00",
   "results": [
     {
-      "title": "Top 10 Street Food...",
-      "link": "https://example.com/food",
-      "snippet": "Laksa is a spicy noodle soup..."
+      "title": "Example Result",
+      "link": "https://example.com",
+      "snippet": "Description text..."
     }
   ],
-  "first_page_html": "<html>...</html>",
-  "extracted_text": "Full clean article text...",
-  "meta_description": "A guide to Singapore's best eats.",
-  "meta_author": "Jane Doe",
-  "meta_date": "2025-01-15"
+  "people_also_ask": ["Question 1?", "Question 2?"],
+  "related_searches": ["Topic A", "Topic B"],
+  "total_results": "About 1,000,000 results"
 }
 ```
 
-## 5. Data Handling Script
-Use `save_results.py` to crawl and save data locally.
+### Deep Extracted Content
+Contains full text, HTML, and contacts extracted via Headless Chrome.
 
-```bash
-# Usage
-python3 save_results.py "your keyword"
+---
 
-# Output Locations
-# - /home/guest/tzdump/keyword_date.json
-# - /home/guest/tzdump/keyword_date.csv
+## Directory Structure
+```
+rust-crawler/
+├── src/
+│   ├── main.rs       # API server and routes
+│   ├── api.rs        # API handlers & Dashboard Endpoint
+│   ├── crawler.rs    # Core Logic (Google/Bing + Deep Extract)
+│   ├── db.rs         # Database operations
+│   └── proxy.rs      # Proxy rotation module
+├── static/           # Dashboard HTML/CSS/JS
+├── debug/            # Debug screenshots and HTML
+├── logs/             # Application logs
+├── crawl-results/    # Output files
+└── Cargo.toml
 ```
 
-## 6. Maintenance & Troubleshooting
+## Changelog
 
-### Restarting the App
-```bash
-# SSH into server
-ssh -i sg-crawling-key.pem ubuntu@13.229.251.25
+### 2025-12-13
+- **Refactor**: Deep Extractor now uses Headless Chrome (JS-Enabled)
+- **Feature**: Google Search Retry Mechanism (Exponential Backoff)
+- **UI**: Added Dark Mode Dashboard (`/tasks`)
+- **Fix**: Resolved "Null" data issues on complex sites using browser-based extraction
+- **Stealth**: Enhanced canvas/WebGL fingerprinting protection
 
-# Restart Docker Container
-sudo docker restart bing-crawler-container
-```
-
-### Viewing Logs
-```bash
-sudo docker logs -f bing-crawler-container
-```
-
-### Updating Code
-1.  Make changes locally.
-2.  Tar and SCP to server:
-    ```bash
-    tar -czf app.tar.gz main.py crawler.py ...
-    scp -i sg-crawling-key.pem app.tar.gz ubuntu@13.229.251.25:~/bing-crawler/
-    ```
-3.  Rebuild and Run:
-    ```bash
-    cd bing-crawler
-    tar -xzf app.tar.gz
-    sudo docker build -t bing-crawler .
-    sudo docker stop bing-crawler-container
-    sudo docker rm bing-crawler-container
-    sudo docker run -d -p 8000:8000 --name bing-crawler-container bing-crawler
-    ```
+## License
+MIT

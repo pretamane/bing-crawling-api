@@ -541,7 +541,47 @@ pub async fn search_bing(keyword: &str) -> Result<SerpData> {
     })
 }
 
+// Wrapper with Retry Logic
 pub async fn search_google(keyword: &str) -> Result<SerpData> {
+    println!("🔎 Starting Google Deep Search for: {}", keyword);
+    let mut last_error = String::from("No results found");
+    
+    // Max 3 attempts for resilience
+    for attempt in 1..=3 {
+        if attempt > 1 {
+             println!("🔄 Retry Attempt {}/3...", attempt);
+        }
+
+        match search_google_attempt(keyword).await {
+            Ok(data) => {
+                if data.results.is_empty() {
+                    println!("⚠️ Attempt {}/3: Google returned 0 results (Block/Captcha?).", attempt);
+                    if attempt < 3 {
+                        let wait_time = 5 * attempt as u64;
+                        println!("⏳ Waiting {}s before retry...", wait_time);
+                        sleep(Duration::from_secs(wait_time)).await;
+                        continue;
+                    }
+                } else {
+                    println!("✅ Attempt {}/3: Success! Found {} results.", attempt, data.results.len());
+                    return Ok(data);
+                }
+            }
+            Err(e) => {
+                println!("❌ Attempt {}/3: Error: {}", attempt, e);
+                last_error = e.to_string();
+                if attempt < 3 {
+                    sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    }
+    
+    Err(anyhow::anyhow!("Google search failed after 3 attempts. Last error: {}", last_error))
+}
+
+// Internal attempt function
+async fn search_google_attempt(keyword: &str) -> Result<SerpData> {
     use rand::seq::SliceRandom;
     // Select a random User-Agent
     let user_agent = USER_AGENTS.choose(&mut rand::thread_rng())
@@ -1092,48 +1132,127 @@ pub async fn extract_content(url: &str) -> Result<ExtractedContent> {
     })
 }
 
-/// Deep extraction function that returns comprehensive WebsiteData
+/// Deep extraction function that returns comprehensive WebsiteData using Headless Chrome
 pub async fn extract_website_data(url: &str) -> Result<WebsiteData> {
     // Decode Bing/Google redirect URLs to get actual destination
     let actual_url = decode_search_url(url);
-    println!("🔍 Deep extracting data from: {}", actual_url);
+    println!("🔍 Deep integration extracting data from: {}", actual_url);
     
-    // Use proper User-Agent and follow redirects
     use rand::seq::SliceRandom;
     let user_agent = USER_AGENTS.choose(&mut rand::thread_rng())
         .unwrap_or(&"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36");
 
-    let client = reqwest::Client::builder()
-        .user_agent(*user_agent)
-        .redirect(reqwest::redirect::Policy::limited(10))
-        .timeout(Duration::from_secs(30))
-        .build()?;
+    // Configure Chrome arguments for Stealth
+    let mut args = vec![
+        std::ffi::OsStr::new("--disable-blink-features=AutomationControlled"),
+        std::ffi::OsStr::new("--no-sandbox"),
+        std::ffi::OsStr::new("--disable-dev-shm-usage"),
+        std::ffi::OsStr::new("--disable-infobars"),
+        std::ffi::OsStr::new("--window-position=0,0"),
+        std::ffi::OsStr::new("--ignore-certificate-errors"),
+        std::ffi::OsStr::new("--ignore-certificate-errors-spki-list"),
+    ];
+    let ua_arg = format!("--user-agent={}", user_agent);
+    args.push(std::ffi::OsStr::new(&ua_arg));
+
+    // Add proxy if available
+    let current_proxy = PROXY_MANAGER.get_next_proxy();
+    let proxy_arg: String;
+    let ext_arg: String;
     
-    let resp: reqwest::Response = client.get(&actual_url)
-        .header("Accept-Language", "en-US,en;q=0.9")
-        .send().await?;
-    let final_url = resp.url().to_string();
-    println!("Final URL: {}", final_url);
+    if let Some(ref proxy) = current_proxy {
+        proxy_arg = format!("--proxy-server={}", proxy.to_chrome_arg());
+        args.push(std::ffi::OsStr::new(&proxy_arg));
+        
+        if proxy.requires_auth() {
+            let ext_path = generate_proxy_auth_extension(
+                proxy.username.as_ref().unwrap(),
+                proxy.password.as_ref().unwrap()
+            );
+            ext_arg = format!("--load-extension={}", ext_path);
+            args.push(std::ffi::OsStr::new(&ext_arg));
+        }
+    }
+
+    // Launch Browser
+    let browser = Browser::new(LaunchOptions {
+        headless: true,
+        window_size: Some((1920, 1080)),
+        args,
+        ..Default::default()
+    })?;
+
+    let tab = browser.new_tab()?;
+
+    // Inject Stealth Script
+    let stealth_script = r#"
+        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => 4 });
+        const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
+        HTMLCanvasElement.prototype.toDataURL = function(...args) {
+             if (this.width > 0 && this.height > 0) {
+                const context = this.getContext('2d');
+                if (context) {
+                    const imageData = context.getImageData(0, 0, this.width, this.height);
+                    if (imageData.data.length > 3) {
+                         imageData.data[3] = Math.max(0, Math.min(255, imageData.data[3] + (Math.random() > 0.5 ? 1 : -1)));
+                         context.putImageData(imageData, 0, 0);
+                    }
+                }
+            }
+            return originalToDataURL.apply(this, args); 
+        };
+        const getParameter = WebGLRenderingContext.prototype.getParameter;
+        WebGLRenderingContext.prototype.getParameter = function(parameter) {
+            if (parameter === 37445) return 'Intel Inc.';
+            if (parameter === 37446) return 'Intel Iris OpenGL Engine';
+            return getParameter.apply(this, [parameter]);
+        };
+        window.chrome = { runtime: {}, loadTimes: function() {}, csi: function() {}, app: {} };
+        ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection', 'msRTCPeerConnection'].forEach(className => {
+             if (window[className]) window[className] = undefined;
+        });
+    "#;
+
+    tab.enable_debugger()?;
+    tab.call_method(headless_chrome::protocol::cdp::Page::AddScriptToEvaluateOnNewDocument {
+        source: stealth_script.to_string(),
+        world_name: None,
+        include_command_line_api: None,
+        run_immediately: None,
+    })?;
+
+    // Navigate
+    println!("Navigating to: {}", actual_url);
+    tab.navigate_to(&actual_url)?;
     
-    let html = resp.text().await?;
+    // Use softer wait (wait for body) instead of strict load event to prevent timeouts on ads/tracking
+    match tab.wait_for_element_with_custom_timeout("body", Duration::from_secs(15)) {
+        Ok(_) => println!("Page body loaded."),
+        Err(e) => println!("⚠️ Warning: Body wait timed out: {}. Attempting extraction anyway...", e),
+    }
+
+    // Wait for JS execution (Hydration)
+    sleep(Duration::from_secs(4)).await;
+
+    // Extract Data via JS
+    let html = tab.evaluate("document.documentElement.outerHTML", false)?.value.unwrap().as_str().unwrap().to_string();
+    let final_url = tab.get_url();
     let html_size = html.len() as u32;
-    println!("HTML size: {} bytes", html_size);
-    
-    // Parse document
+    println!("Extracted HTML size via Browser: {} bytes", html_size);
+
+    // Parse document using Scraper for consistency with previous logic
     let document = Html::parse_document(&html);
     
-    // Extract base domain for link filtering
+    // Extract base domain
     let base_domain = reqwest::Url::parse(&final_url)
         .map(|u| u.host_str().unwrap_or("").to_string())
         .unwrap_or_default();
     
     // 1. Extract title
-    let title_selector = Selector::parse("title").unwrap();
-    let title = document.select(&title_selector).next()
-        .map(|e| e.text().collect::<String>())
-        .unwrap_or_default();
+    let title = tab.evaluate("document.title", false)?.value.unwrap().as_str().unwrap().to_string();
     
-    // 2. Extract meta tags
+    // 2. Extract meta tags using Scraper
     let desc_selector = Selector::parse("meta[name='description']").unwrap();
     let keywords_selector = Selector::parse("meta[name='keywords']").unwrap();
     let author_selector = Selector::parse("meta[name='author']").unwrap();
@@ -1148,11 +1267,16 @@ pub async fn extract_website_data(url: &str) -> Result<WebsiteData> {
     let meta_date = document.select(&date_selector).next()
         .and_then(|e| e.value().attr("content").map(|s| s.to_string()));
     
-    // 3. Extract main text using Readability
+    // 3. Extract main text using Readability on the rendered HTML
     let mut reader = Cursor::new(html.as_bytes());
     let main_text = match readability::extractor::extract(&mut reader, &reqwest::Url::parse(&final_url)?) {
         Ok(product) => product.text,
-        Err(_) => String::new(),
+        Err(_) => {
+            // Fallback to body text if Readability fails
+            tab.evaluate("document.body.innerText", false)
+                .map(|v| v.value.unwrap().as_str().unwrap().to_string())
+                .unwrap_or_default()
+        },
     };
     let word_count = main_text.split_whitespace().count() as u32;
     
@@ -1168,20 +1292,12 @@ pub async fn extract_website_data(url: &str) -> Result<WebsiteData> {
     // 6. Extract contact information
     let emails = extract_emails(&html);
     let phone_numbers = extract_phone_numbers(&main_text);
-    if !emails.is_empty() {
-        println!("📧 Found {} emails", emails.len());
-    }
-    if !phone_numbers.is_empty() {
-        println!("📞 Found {} phone numbers", phone_numbers.len());
-    }
     
     // 7. Extract images
     let images = extract_images(&document, &format!("https://{}", base_domain));
-    println!("🖼️ Found {} images", images.len());
     
     // 8. Extract outbound links
     let outbound_links = extract_outbound_links(&document, &base_domain);
-    println!("🔗 Found {} outbound links", outbound_links.len());
     
     Ok(WebsiteData {
         url: actual_url,

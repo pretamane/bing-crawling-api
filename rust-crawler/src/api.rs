@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, State},
     Json,
+    http::StatusCode,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -8,6 +9,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 use crate::crawler;
 use utoipa::{ToSchema, OpenApi};
+use chrono::NaiveDateTime;
+use crate::proxy::{PROXY_MANAGER, ProxyInfo, ProxyStats};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -46,6 +49,17 @@ pub struct TaskResult {
     pub meta_description: Option<String>,
     pub meta_author: Option<String>,
     pub meta_date: Option<String>,
+}
+
+#[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
+pub struct TaskSummary {
+    pub id: String,
+    pub keyword: String,
+    pub engine: String,
+    pub status: String,
+    pub created_at: Option<chrono::NaiveDateTime>,
+    pub results_json: Option<String>,
+    pub extracted_text: Option<String>,
 }
 
 #[utoipa::path(
@@ -175,7 +189,10 @@ pub async fn trigger_crawl(
         (status = 200, description = "Crawl status/results", body = Option<TaskResult>)
     )
 )]
+
+
 pub async fn get_crawl_status(
+// ... existing code ...
     State(state): State<Arc<AppState>>,
     Path(task_id): Path<String>,
 ) -> Json<Option<TaskResult>> {
@@ -190,11 +207,32 @@ pub async fn get_crawl_status(
     Json(rec)
 }
 
+#[utoipa::path(
+    get,
+    path = "/tasks",
+    tag = "crawler",
+    responses(
+        (status = 200, description = "List recent tasks", body = Vec<TaskSummary>)
+    )
+)]
+pub async fn list_tasks(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<TaskSummary>>, (StatusCode, String)> {
+    let tasks = sqlx::query_as::<sqlx::Postgres, TaskSummary>(
+        "SELECT id, keyword, engine, status, created_at, results_json, left(extracted_text, 1000) as extracted_text FROM tasks ORDER BY created_at DESC LIMIT 50"
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e: sqlx::Error| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(Json(tasks))
+}
+
 // ============================================================================
 // Proxy Management API
 // ============================================================================
 
-use crate::proxy::{PROXY_MANAGER, ProxyInfo, ProxyStats};
+// Imports moved to top
 
 /// List all proxies with their health status
 pub async fn list_proxies() -> Json<Vec<ProxyInfo>> {
