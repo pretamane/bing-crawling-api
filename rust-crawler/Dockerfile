@@ -45,6 +45,7 @@ RUN apt-get update && apt-get install -y \
     libxtst6 \
     lsb-release \
     xdg-utils \
+    dumb-init \
     --no-install-recommends
 
 # Install Google Chrome
@@ -57,7 +58,7 @@ RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key
 WORKDIR /app
 COPY --from=builder /app/target/release/rust-crawler /app/rust-crawler
 
-
 EXPOSE 3000
 
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["./rust-crawler"]

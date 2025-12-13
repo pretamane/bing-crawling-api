@@ -55,10 +55,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt::init();
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&db_url)
-        .await?;
+    let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    
+    // Robust Connection Retry Loop
+    println!("🔌 Connecting to Database...");
+    let pool = {
+        let mut attempts = 0;
+        loop {
+            match PgPoolOptions::new()
+                .max_connections(5)
+                .connect(&db_url)
+                .await 
+            {
+                Ok(p) => {
+                    println!("✅ Database Connected!");
+                    break p;
+                },
+                Err(e) => {
+                    attempts += 1;
+                    if attempts >= 15 {
+                        eprintln!("🔥 CRITICAL: Failed to connect to DB after 15 attempts.");
+                        return Err(e.into());
+                    }
+                    println!("⚠️ DB Connect failed ({}), retrying in 2s... (Attempt {}/15)", e, attempts);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+    };
 
     db::init_db(&pool).await?;
 
