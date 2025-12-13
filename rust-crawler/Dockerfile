@@ -1,4 +1,4 @@
-FROM rust:latest as builder
+FROM rust:1.84-bookworm as builder
 
 WORKDIR /app
 COPY . .
