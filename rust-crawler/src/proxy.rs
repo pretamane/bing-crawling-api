@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+use utoipa::ToSchema;
 
 /// Global proxy manager instance
 pub static PROXY_MANAGER: Lazy<ProxyManager> = Lazy::new(|| {
@@ -46,7 +47,7 @@ pub static PROXY_MANAGER: Lazy<ProxyManager> = Lazy::new(|| {
 });
 
 /// Proxy protocol types
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ProxyProtocol {
     Http,
@@ -200,10 +201,13 @@ impl Proxy {
 }
 
 /// Serializable proxy info for API responses
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ProxyInfo {
+    #[schema(example = "1.2.3.4:8080")]
     pub id: String,
+    #[schema(example = "1.2.3.4")]
     pub host: String,
+    #[schema(example = 8080)]
     pub port: u16,
     pub protocol: ProxyProtocol,
     pub has_auth: bool,
@@ -232,7 +236,7 @@ impl From<&Proxy> for ProxyInfo {
 }
 
 /// Aggregate stats for the proxy pool
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ProxyStats {
     pub total_proxies: usize,
     pub healthy_proxies: usize,

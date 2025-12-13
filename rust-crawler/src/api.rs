@@ -234,25 +234,47 @@ pub async fn list_tasks(
 
 // Imports moved to top
 
+// ============================================================================
+// Proxy Management API
+// ============================================================================
+
 /// List all proxies with their health status
+#[utoipa::path(
+    get,
+    path = "/proxies",
+    tag = "proxy",
+    responses(
+        (status = 200, description = "List all proxies", body = Vec<ProxyInfo>)
+    )
+)]
 pub async fn list_proxies() -> Json<Vec<ProxyInfo>> {
     Json(PROXY_MANAGER.list_proxies())
 }
 
 /// Add a new proxy at runtime
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct AddProxyRequest {
     /// Proxy string: host:port or user:pass@host:port
+    #[schema(example = "user:pass@1.2.3.4:8080")]
     pub proxy: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct AddProxyResponse {
     pub success: bool,
     pub proxy: Option<ProxyInfo>,
     pub error: Option<String>,
 }
 
+#[utoipa::path(
+    post,
+    path = "/proxies",
+    tag = "proxy",
+    request_body = AddProxyRequest,
+    responses(
+        (status = 200, description = "Add a new proxy", body = AddProxyResponse)
+    )
+)]
 pub async fn add_proxy(
     Json(payload): Json<AddProxyRequest>,
 ) -> Json<AddProxyResponse> {
@@ -271,12 +293,23 @@ pub async fn add_proxy(
 }
 
 /// Remove a proxy by ID
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct RemoveProxyResponse {
     pub success: bool,
     pub error: Option<String>,
 }
 
+#[utoipa::path(
+    delete,
+    path = "/proxies/{proxy_id}",
+    tag = "proxy",
+    params(
+        ("proxy_id" = String, Path, description = "Proxy ID (e.g., host:port)")
+    ),
+    responses(
+        (status = 200, description = "Remove a proxy", body = RemoveProxyResponse)
+    )
+)]
 pub async fn remove_proxy(
     Path(proxy_id): Path<String>,
 ) -> Json<RemoveProxyResponse> {
@@ -293,6 +326,17 @@ pub async fn remove_proxy(
 }
 
 /// Re-enable a disabled proxy
+#[utoipa::path(
+    post,
+    path = "/proxies/{proxy_id}/enable",
+    tag = "proxy",
+    params(
+        ("proxy_id" = String, Path, description = "Proxy ID")
+    ),
+    responses(
+        (status = 200, description = "Re-enable a proxy", body = RemoveProxyResponse)
+    )
+)]
 pub async fn enable_proxy(
     Path(proxy_id): Path<String>,
 ) -> Json<RemoveProxyResponse> {
@@ -309,6 +353,14 @@ pub async fn enable_proxy(
 }
 
 /// Get aggregate proxy stats
+#[utoipa::path(
+    get,
+    path = "/proxies/stats",
+    tag = "proxy",
+    responses(
+        (status = 200, description = "Get proxy statistics", body = ProxyStats)
+    )
+)]
 pub async fn proxy_stats() -> Json<ProxyStats> {
     Json(PROXY_MANAGER.get_stats())
 }

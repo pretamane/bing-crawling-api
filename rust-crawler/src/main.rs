@@ -21,13 +21,30 @@ use tower_http::services::ServeDir;
     paths(
         api::trigger_crawl,
         api::get_crawl_status,
-        api::list_tasks
+        api::list_tasks,
+        api::list_proxies,
+        api::add_proxy,
+        api::remove_proxy,
+        api::enable_proxy,
+        api::proxy_stats
     ),
     components(
-        schemas(api::CrawlRequest, api::CrawlResponse, api::TaskResult, api::TaskSummary)
+        schemas(
+            api::CrawlRequest, 
+            api::CrawlResponse, 
+            api::TaskResult, 
+            api::TaskSummary,
+            api::AddProxyRequest,
+            api::AddProxyResponse,
+            api::RemoveProxyResponse,
+            crate::proxy::ProxyInfo,
+            crate::proxy::ProxyStats,
+            crate::proxy::ProxyProtocol
+        )
     ),
     tags(
-        (name = "crawler", description = "Crawler Management API")
+        (name = "crawler", description = "Crawler Management API"),
+        (name = "proxy", description = "Proxy Management API")
     )
 )]
 struct ApiDoc;
