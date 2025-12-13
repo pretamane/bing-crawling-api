@@ -142,3 +142,5 @@ rust-crawler/
 
 ## License
 MIT
+
+# CI trigger
