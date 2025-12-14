@@ -1,10 +1,10 @@
-FROM rustlang/rust:nightly as builder
+FROM docker.io/rust:bookworm as builder
 
 WORKDIR /app
 COPY . .
 RUN cargo build --release
 
-FROM debian:testing-slim
+FROM debian:bookworm-slim
 
 # Install dependencies for Chrome and SSL
 RUN apt-get update && apt-get install -y \

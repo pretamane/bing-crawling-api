@@ -1,3 +1,7 @@
-thaw-zin-2k77.de5.net {
+thaw-zin-2k77.de5.net, 54.179.175.198.nip.io {
     reverse_proxy crawler:3000
+}
+
+adminer.thaw-zin-2k77.de5.net, adminer.54.179.175.198.nip.io {
+    reverse_proxy adminer:8080
 }

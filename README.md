@@ -140,6 +140,49 @@ rust-crawler/
 - **Fix**: Resolved "Null" data issues on complex sites using browser-based extraction
 - **Stealth**: Enhanced canvas/WebGL fingerprinting protection
 
+---
+
+## 🏗️ Deep Technical Architecture
+For a comprehensive deep dive into the **Architecture**, **Dependency Graph**, **Internal Modules**, and **AI Tech Stack**, please refer to our **Official Technical Documentation**.
+
+[![Tech Stack Gist](https://img.shields.io/badge/GitHub%20Gist-Technical%20Stack%20%26%20Usage-blue?style=for-the-badge&logo=github)](https://gist.github.com/pretamane/9f655f4502b257bae7d5e4dc41d16053)
+
+> **[📄 View Full Technical Stack Documentation (Gist)](https://gist.github.com/pretamane/9f655f4502b257bae7d5e4dc41d16053)**
+
+### Architecture Diagram
+```mermaid
+graph TD
+    %% Nodes
+    Client["Client (Browser / API)"]
+    Caddy["Caddy Reverse Proxy"]
+    Crawler["Rust Crawler Service"]
+    Adminer["Adminer DB GUI"]
+    DB[("PostgreSQL 15")]
+    Chrome["Headless Chrome Instance"]
+    Storage["Filesystem / Results"]
+
+    %% Styles
+    %% Professional Cool/Warm Palette
+    style Client fill:#E1F5FE,stroke:#0277BD,stroke-width:2px,color:#01579B
+    style Caddy fill:#B3E5FC,stroke:#0277BD,stroke-width:2px,color:#01579B
+    style Crawler fill:#C8E6C9,stroke:#2E7D32,stroke-width:2px,color:#1B5E20
+    style Adminer fill:#C8E6C9,stroke:#2E7D32,stroke-width:2px,color:#1B5E20
+    style DB fill:#FFF9C4,stroke:#FBC02D,stroke-width:2px,shape:cylinder,color:#F57F17
+    style Chrome fill:#F5F5F5,stroke:#616161,stroke-width:1px,stroke-dasharray: 5 5,color:#212121
+    style Storage fill:#E0E0E0,stroke:#616161,stroke-width:2px,color:#212121
+
+    %% Connections
+    Client -->|HTTPS :443| Caddy
+    Caddy -->|/crawl :3000| Crawler
+    Caddy -->|/proxies :3000| Crawler
+    Caddy -->|/adminer :8080| Adminer
+    
+    Crawler -->|SQL Queries| DB
+    Crawler -->|CDP Protocol| Chrome
+    Crawler -->|Write JSON/HTML| Storage
+    Adminer -->|Manage DB| DB
+```
+
 ## License
 MIT
 

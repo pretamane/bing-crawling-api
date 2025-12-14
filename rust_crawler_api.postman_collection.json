@@ -1,0 +1,163 @@
+{
+	"info": {
+		"_postman_id": "d6dd8aea-6b1a-42ae-9cfd-e55ebbe65ef5",
+		"name": "Rust Crawler API",
+		"description": "API Collection for the Rust Crawler service. Includes endpoints for crawling, task management, and proxy management. Configured to use {{baseUrl}} variable for easy switching between domains.",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"item": [
+		{
+			"name": "Crawler",
+			"item": [
+				{
+					"name": "Trigger Crawl",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"keyword\": \"Top 5 Asean Tourism Sites\",\n    \"engine\": \"bing\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/crawl",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"crawl"
+							]
+						},
+						"description": "Trigger a new crawl task. Supported engines: 'google', 'bing'."
+					},
+					"response": []
+				},
+				{
+					"name": "Get Crawl Status",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/crawl/:task_id",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"crawl",
+								":task_id"
+							],
+							"variable": [
+								{
+									"key": "task_id",
+									"value": "YOUR_TASK_ID_HERE",
+									"description": "The UUID of the task to check"
+								}
+							]
+						},
+						"description": "Get the status and results of a specific crawl task."
+					},
+					"response": []
+				},
+				{
+					"name": "List Recent Tasks",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/tasks",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"tasks"
+							]
+						},
+						"description": "List the most recent crawl tasks."
+					},
+					"response": []
+				}
+			]
+		},
+		{
+			"name": "Proxy Management",
+			"item": [
+				{
+					"name": "List Proxies",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/proxies",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"proxies"
+							]
+						},
+						"description": "List all configured proxies and their health status."
+					},
+					"response": []
+				},
+				{
+					"name": "Add Proxy",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n    \"proxy\": \"user:pass@1.2.3.4:8080\"\n}"
+						},
+						"url": {
+							"raw": "{{baseUrl}}/proxies",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"proxies"
+							]
+						},
+						"description": "Add a new proxy to the rotation."
+					},
+					"response": []
+				},
+				{
+					"name": "Proxy Stats",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{baseUrl}}/proxies/stats",
+							"host": [
+								"{{baseUrl}}"
+							],
+							"path": [
+								"proxies",
+								"stats"
+							]
+						},
+						"description": "Get aggregate proxy usage statistics."
+					},
+					"response": []
+				}
+			]
+		}
+	],
+	"variable": [
+		{
+			"key": "baseUrl",
+			"value": "https://thaw-zin-2k77.de5.net",
+			"type": "string",
+			"description": "Current Base URL. Switch value to 'https://54.179.175.198.nip.io' for the regular/fallback domain."
+		}
+	]
+}

@@ -1,0 +1,58 @@
+services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: crawler
+      POSTGRES_PASSWORD: crawler_password
+      POSTGRES_DB: crawling_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  adminer:
+    image: adminer
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+
+  # Rust Crawler (Production - Local Build)
+  crawler:
+    image: rust-crawler:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://crawler:crawler_password@db:5432/crawling_db
+      - RUST_LOG=info
+      - STORAGE_PATH=/app/results
+      - PROXY_LIST=${PROXY_LIST:-}
+      - PROXY_ROTATION=${PROXY_ROTATION:-roundrobin}
+      - PROXY_MAX_FAILS=${PROXY_MAX_FAILS:-3}
+    depends_on:
+      - db
+    volumes:
+      - ./crawl-results:/app/results
+      - ./rust-crawler/debug:/app/debug
+      - ./rust-crawler/logs:/app/logs
+
+  caddy:
+    image: caddy:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - crawler
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:
