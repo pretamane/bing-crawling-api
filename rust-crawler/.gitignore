@@ -19,3 +19,7 @@
 
 # Output
 /crawl-results/
+
+# User Data (Sensitive)
+cookies.json
+cookies.lock

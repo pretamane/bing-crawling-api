@@ -10,9 +10,10 @@ pub struct QueueManager {
 use serde::{Deserialize, Serialize};
 use crate::api::CrawlRequest;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CrawlJob {
     pub id: String,
+    pub user_id: String, // Added user_id
     pub keyword: String,
     pub engine: String,
     pub selectors: Option<std::collections::HashMap<String, String>>,

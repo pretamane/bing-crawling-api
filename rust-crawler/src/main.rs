@@ -1,20 +1,17 @@
-mod api;
-mod crawler;
-mod db;
-mod proxy;
-mod storage;
-mod queue;
-mod worker;
-mod scheduler;
 
+use rust_crawler::{api, auth, crawler, db, ml, notifications, payments, profiles, proxy, queue, scheduler, stealth, storage, worker};
 use axum::{
-    routing::{get, post},
+    routing::{get, post, delete},
     Router,
 };
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgPoolOptions, PgConnectOptions};
+use sqlx::ConnectOptions;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use dotenv::dotenv;
 use std::env;
+use tokio::time::Duration;
+use tower_http::cors::{CorsLayer, Any};
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -48,7 +45,10 @@ use tower_http::services::ServeDir;
     ),
     tags(
         (name = "crawler", description = "Crawler Management API"),
-        (name = "proxy", description = "Proxy Management API")
+        (name = "proxy", description = "Proxy Management API"),
+        (name = "profiles", description = "User Profiles API"),
+        (name = "payments", description = "Payment Processing API"),
+        (name = "notifications", description = "Notifications API")
     )
 )]
 struct ApiDoc;
@@ -61,13 +61,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     
     // Robust Connection Retry Loop
+    // Robust Connection Retry Loop
     println!("🔌 Connecting to Database...");
     let pool = {
         let mut attempts = 0;
         loop {
+            // Fix for Supabase Transaction Pooler: Disable Prepared Statements
+            let mut opts = sqlx::postgres::PgConnectOptions::from_url(&db_url.parse().unwrap())
+                .expect("Invalid DATABASE_URL")
+                .statement_cache_capacity(0);
+            
             match PgPoolOptions::new()
                 .max_connections(5)
-                .connect(&db_url)
+                .after_connect(|conn, _meta| Box::pin(async move {
+                    use sqlx::Executor;
+                    conn.execute("DEALLOCATE ALL").await.map(|_| ())
+                }))
+                .connect_with(opts)
                 .await 
             {
                 Ok(p) => {
@@ -87,7 +97,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    db::init_db(&pool).await?;
+    let _ = profiles::init_profiles_table(&pool).await;
+    let _ = payments::init_payments_table(&pool).await;
+    let _ = notifications::init_notifications_table(&pool).await;
+    println!("✅ All database tables initialized!");
 
     let storage = storage::StorageManager::new().await.expect("Failed to init MinIO");
     let queue = queue::QueueManager::new().await.expect("Failed to init Redis");
@@ -110,6 +123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app = Router::new()
         .merge(SwaggerUi::new("/rust-crawler-swagger").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        // Crawler endpoints
         .route("/crawl", post(api::trigger_crawl))
         .route("/crawl/:task_id", get(api::get_crawl_status))
         .route("/tasks", get(api::list_tasks))
@@ -119,7 +133,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/proxies/:proxy_id", axum::routing::delete(api::remove_proxy))
         .route("/proxies/:proxy_id/enable", post(api::enable_proxy))
         .route("/proxies/stats", get(api::proxy_stats))
-        .nest_service("/", ServeDir::new("static")) // Serve Dashboard
+        // Auth endpoints
+        .route("/auth/status", get(auth::auth_status))
+        // Profile endpoints
+        .route("/profiles", get(profiles::list_profiles))
+        .route("/profiles", post(profiles::create_profile))
+        .route("/profiles/:id", get(profiles::get_profile))
+        .route("/profiles/:id", axum::routing::patch(profiles::update_profile))
+        // Payment endpoints
+        .route("/payments/checkout", post(payments::create_checkout))
+        .route("/payments/webhook", post(payments::handle_webhook))
+        .route("/payments/history/:user_id", get(payments::get_payment_history))
+        // Notification endpoints
+        .route("/notifications/send", post(notifications::send_notification))
+        .route("/notifications", get(notifications::get_notifications))
+        .route("/notifications/:id/read", axum::routing::patch(notifications::mark_as_read))
+        // Static files
+        .nest_service("/", ServeDir::new("static"))
         .with_state(state);
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());

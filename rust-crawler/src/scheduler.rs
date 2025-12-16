@@ -27,6 +27,7 @@ pub async fn start_scheduler(state: Arc<AppState>) -> anyhow::Result<()> {
                 // Example: Trigger a crawl for "Rust Programming" daily
                 let job = crate::queue::CrawlJob {
                     id: uuid::Uuid::new_v4().to_string(),
+                    user_id: "system".to_string(), // Scheduler runs as system
                     keyword: "daily trend analysis".to_string(),
                     engine: "bing".to_string(),
                     selectors: None,

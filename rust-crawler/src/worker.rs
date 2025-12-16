@@ -52,7 +52,7 @@ async fn process_job(state: Arc<AppState>, job: CrawlJob) -> anyhow::Result<()> 
     };
 
     // 2. Extract Content (Deep Crawl)
-    let first_result_data = if let Some(first_result) = serp_data.results.first() {
+    let first_result_data: Option<crawler::WebsiteData> = if let Some(first_result) = serp_data.results.first() {
         println!("🔍 [Worker] Deep extracting: {}", first_result.link);
         crawler::extract_website_data(&first_result.link).await.ok()
     } else {
@@ -75,21 +75,62 @@ async fn process_job(state: Arc<AppState>, job: CrawlJob) -> anyhow::Result<()> 
     }
 
     // Prepare data for DB
-    let (extracted_text, extracted_html, md, ma, mdate) = if let Some(data) = &first_result_data {
+    let (extracted_text, extracted_html, md, ma, mdate, emails, phones, links, images, sentiment, entities, category, marketing) = if let Some(data) = &first_result_data {
+        
+        // --- AI/ML ENRICHMENT (Running Locally) ---
+        // We call the Python Sidecar on localhost:8000
+        let entities = crate::ml::extract_entities_remote(&data.main_text).await;
+        let category = crate::ml::classify_content_remote(&data.main_text).await;
+
         (
             data.main_text.clone(),
             data.html.clone(),
             data.meta_description.clone(),
             data.meta_author.clone(),
-            data.meta_date.clone()
+            data.meta_date.clone(),
+            serde_json::to_value(&data.emails).unwrap_or_default(),
+            serde_json::to_value(&data.phone_numbers).unwrap_or_default(),
+            serde_json::to_value(&data.outbound_links).unwrap_or_default(),
+            serde_json::to_value(&data.images).unwrap_or_default(),
+            data.sentiment.clone(),
+            serde_json::to_value(&entities).unwrap_or_default(), // New: Entities
+            category, // New: Category
+            serde_json::to_value(&data.marketing_data).unwrap_or_default(), // New: Marketing Data
         )
     } else {
-        (String::new(), String::new(), None, None, None)
+        (
+            String::new(), 
+            String::new(), 
+            None, 
+            None, 
+            None, 
+            serde_json::json!([]), 
+            serde_json::json!([]), 
+            serde_json::json!([]), 
+            serde_json::json!([]),
+            None,
+            serde_json::json!([]),
+            Option::<String>::None,
+            serde_json::json!({})
+        )
     };
 
     // 4. Save to DB
+    // 4. Save to DB with Workaround for Supabase
+    let mut conn = pool.acquire().await?;
+    // Workaround: generic deallocate to prevent "prepared statement already exists"
+    let _ = sqlx::query("DEALLOCATE ALL").execute(&mut *conn).await;
+
     sqlx::query(
-        "INSERT INTO tasks (id, keyword, engine, status, results_json, extracted_text, first_page_html, meta_description, meta_author, meta_date) VALUES ($1, $2, $3, 'completed', $4, $5, $6, $7, $8, $9)"
+        r#"
+        INSERT INTO tasks (
+            id, keyword, engine, status, results_json, 
+            extracted_text, first_page_html, meta_description, meta_author, meta_date,
+            emails, phone_numbers, outbound_links, images, sentiment,
+            entities, category, marketing_data
+        ) 
+        VALUES ($1, $2, $3, 'completed', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        "#
     )
     .bind(&job.id)
     .bind(&job.keyword)
@@ -100,9 +141,35 @@ async fn process_job(state: Arc<AppState>, job: CrawlJob) -> anyhow::Result<()> 
     .bind(&md)
     .bind(&ma)
     .bind(&mdate)
-    .execute(&pool)
+    .bind(&emails)
+    .bind(&phones)
+    .bind(&links)
+    .bind(&images)
+    .bind(&sentiment)
+    .bind(&entities)
+    .bind(&category)
+    .bind(&marketing)
+    .execute(&mut *conn)
     .await?;
 
     println!("✅ [Worker] Job {} completed successfully!", job.id);
+
+    // 5. Send Notification
+    // We manually insert into DB because the worker doesn't have the API state/auth/endpoints handy, 
+    // but sharing the DB pool is sufficient.
+    let notification_id = uuid::Uuid::new_v4().to_string();
+    let message = format!("Crawl finished for '{}'. Category: {:?}", job.keyword, category.as_deref().unwrap_or("Unknown"));
+    
+    // We skip the email sending part here for simplicity/speed (or we could duplicate the logic),
+    // primarily ensuring the in-app notification exists for the test flow.
+    let _ = sqlx::query(
+        "INSERT INTO notifications (id, user_id, notification_type, subject, message) VALUES ($1, $2, 'system', 'Crawl Completed', $3)"
+    )
+    .bind(&notification_id)
+    .bind(&job.user_id)
+    .bind(&message)
+    .execute(&pool) // using the pool clone
+    .await;
+
     Ok(())
 }

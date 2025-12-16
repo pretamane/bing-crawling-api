@@ -55,6 +55,8 @@ pub struct TaskResult {
     pub meta_description: Option<String>,
     pub meta_author: Option<String>,
     pub meta_date: Option<String>,
+    pub entities: Option<serde_json::Value>,
+    pub category: Option<String>,
 }
 
 #[derive(Serialize, sqlx::FromRow, utoipa::ToSchema)]
@@ -68,6 +70,7 @@ pub struct TaskSummary {
     pub extracted_text: Option<String>,
 }
 
+
 #[utoipa::path(
     post,
     path = "/crawl",
@@ -78,6 +81,7 @@ pub struct TaskSummary {
 )]
 pub async fn trigger_crawl(
     State(state): State<Arc<AppState>>,
+    user: crate::auth::AuthUser, // Require Auth
     Json(payload): Json<CrawlRequest>,
 ) -> Json<CrawlResponse> {
     let task_id = Uuid::new_v4().to_string();
@@ -86,6 +90,7 @@ pub async fn trigger_crawl(
 
     let job = crate::queue::CrawlJob {
         id: task_id.clone(),
+        user_id: user.id.clone(), // Pass user ID to worker
         keyword,
         engine,
         selectors: payload.selectors,
@@ -128,7 +133,7 @@ pub async fn get_crawl_status(
     Path(task_id): Path<String>,
 ) -> Json<Option<TaskResult>> {
     let rec = sqlx::query_as::<_, TaskResult>(
-        "SELECT id, keyword, engine, status, results_json, extracted_text, first_page_html, meta_description, meta_author, meta_date FROM tasks WHERE id = $1"
+        "SELECT id, keyword, engine, status, results_json, extracted_text, first_page_html, meta_description, meta_author, meta_date, entities, category FROM tasks WHERE id = $1"
     )
     .bind(task_id)
     .fetch_optional(&state.pool)
