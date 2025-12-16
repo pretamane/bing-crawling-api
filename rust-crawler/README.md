@@ -1,6 +1,7 @@
-# Rust Crawler
+# Rust Crawler - Stealthy Deep Web Extraction
+**High-Performance | Headless Chrome | Proxy Rotation**
 
-Production-grade web crawler with **Google** and **Bing** search support, featuring proxy rotation, stealth mode, and true deep data extraction using Headless Chrome.
+A production-grade, stealthy web crawler designed for deep data extraction. Features **Google & Bing SERP support**, true deep crawling via **Headless Chrome** (executing JS & bypassing anti-bot measures), and robust **proxy rotation** strategies.
 
 ## Features
 

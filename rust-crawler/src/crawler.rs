@@ -343,6 +343,28 @@ pub async fn search_bing(keyword: &str) -> Result<SerpData> {
                  window[className] = undefined;
              }
         });
+
+        // 7. AudioContext Noise (Audio Fingerprint Defense)
+        const originalCreateOscillator = window.AudioContext.prototype.createOscillator || window.webkitAudioContext.prototype.createOscillator;
+        if (originalCreateOscillator) {
+            const contextProto = window.AudioContext ? window.AudioContext.prototype : window.webkitAudioContext.prototype;
+            contextProto.createOscillator = function() {
+                const oscillator = originalCreateOscillator.apply(this, arguments);
+                const originalStart = oscillator.start;
+                oscillator.start = function(when = 0) {
+                    return originalStart.apply(this, [when + (Math.random() * 0.0001)]);
+                };
+                return oscillator;
+            };
+        }
+
+        // 8. Permission Mocking (Notifications = denied)
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+        );
     "#;
 
     // Enable Page domain to use addScriptToEvaluateOnNewDocument
@@ -354,34 +376,21 @@ pub async fn search_bing(keyword: &str) -> Result<SerpData> {
         run_immediately: None,
     })?;
 
-    // 1. Navigate to Home
+    // 1. Navigate to Home (Allowing native Geo-IP detection, no forced CC)
     println!("Navigating to Bing Home...");
-    tab.navigate_to("https://www.bing.com/?cc=US")?;
+    // Simulate arriving from a search engine or direct typing
+    let mut headers = std::collections::HashMap::new();
+    headers.insert("Referer", "https://www.google.com/");
+    headers.insert("Accept-Language", "en-US,en;q=0.9");
+    tab.set_extra_http_headers(headers)?;
+
+    let search_url = format!("https://www.bing.com/search?q={}", urlencoding::encode(keyword));
+    println!("Navigating directly to Bing Search: {}", search_url);
+    tab.navigate_to(&search_url)?;
     tab.wait_until_navigated()?;
     
-    // 2. Type Query (Layer 3: Typing Speed)
-    let search_box = tab.wait_for_element("input[name='q']")?;
-    search_box.click()?;
-    
-    // Clear any existing content (important for fresh search)
-    println!("Clearing search box...");
-    tab.evaluate(r#"
-        const input = document.querySelector('input[name="q"]');
-        if (input) { input.value = ''; input.focus(); }
-    "#, false)?;
-    sleep(Duration::from_millis(200)).await;
-    
-    println!("Typing query: {}...", keyword);
-    for char in keyword.chars() {
-        tab.type_str(&char.to_string())?;
-        // Random typing delay (80-200ms)
-        sleep(Duration::from_millis(80 + (rand::random::<u64>() % 120))).await;
-    }
-    
-    // 3. Submit
-    tab.press_key("Enter")?;
-    tab.wait_until_navigated()?;
-    println!("Search submitted.");
+    // Increased "Human" hesitation for rendering
+    sleep(Duration::from_millis(2000 + (rand::random::<u64>() % 3000))).await;
     
     // Layer 3: Behavioral Realism (Human-Like Interaction)
     // Random mouse movements via JS (Bezier-like curves simulated with steps)
@@ -646,6 +655,7 @@ async fn search_google_attempt(keyword: &str) -> Result<SerpData> {
         std::ffi::OsStr::new("--window-position=0,0"),
         std::ffi::OsStr::new("--ignore-certificate-errors"),
         std::ffi::OsStr::new("--ignore-certificate-errors-spki-list"),
+        std::ffi::OsStr::new("--incognito"),
     ];
     let ua_arg = format!("--user-agent={}", user_agent);
     args.push(std::ffi::OsStr::new(&ua_arg));
@@ -1467,7 +1477,17 @@ pub async fn generic_crawl(url: &str, selectors: Option<std::collections::HashMa
     
     // Simulate scroll for forums (often lazy load)
     let _ = tab.evaluate("window.scrollTo(0, document.body.scrollHeight);", false);
-    sleep(Duration::from_secs(2)).await;
+    sleep(Duration::from_secs(3)).await;
+
+    // Capture verification screenshot (Critical for User Assurance)
+    println!("📸 Capturing Generic Verification Screenshot...");
+    if let Ok(screenshot) = tab.capture_screenshot(
+        headless_chrome::protocol::cdp::Page::CaptureScreenshotFormatOption::Png,
+        None, None, true
+    ) {
+        let _ = std::fs::write("debug/debug_generic_stealth.png", &screenshot);
+        println!("✅ Screenshot saved to debug/debug_generic_stealth.png");
+    }
 
     let html_content = tab.get_content()?;
     let document = Html::parse_document(&html_content);

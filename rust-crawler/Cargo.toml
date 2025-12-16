@@ -2,6 +2,7 @@
 name = "rust-crawler"
 version = "0.1.0"
 edition = "2021"
+description = "High-performance, stealthy web crawler with Headless Chrome deep extraction and proxy rotation."
 
 [dependencies]
 axum = "0.7"
