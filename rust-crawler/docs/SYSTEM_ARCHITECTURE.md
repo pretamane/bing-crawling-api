@@ -32,7 +32,7 @@ graph TD
     API -->|"TCP/RESP :6379 (RPUSH)"| Redis
     API -->|"TCP/Postgres :6543 (Pool)"| DB
     
-    Worker -->|"TCP/RESP :6379 (BLPOP)"| Redis
+    Worker -->|"TCP/RESP :6379 (RPOP)"| Redis
     Worker -->|"WebSocket/CDP :9222"| Chrome
     Worker -->|"HTTP/REST :8000"| Python
     Worker -->|"TCP/Postgres :6543 (Pool)"| DB
@@ -53,10 +53,10 @@ graph TD
 *   **Redis (Message Broker)**:
     *   **Protocol**: RESP (REdis Serialization Protocol).
     *   **Queue Pattern**: Producer-Consumer.
-    *   **Key**: `queue:jobs` (List).
+    *   **Keys**: `crawl_queue` (List).
     *   **Ops**: 
-        *   Producer: `RPUSH queue:jobs <JSON_PAYLOAD>` (O(1)).
-        *   Consumer: `BLPOP queue:jobs 0` (Blocking wait, O(1)).
+        *   Producer: `lpush("crawl_queue", json)` (O(1)).
+        *   Consumer: Worker polls via `rpop` (O(1)).
     *   **Payload Schema**:
         ```json
         {
@@ -110,7 +110,46 @@ When the worker extracts text, the following specific sequence occurs:
 
 ---
 
-## 3. Workflow Lifecycle (The 5 Phases)
+## 3. Detailed Service Specifications (Infrastructure & Core)
+
+This section provides the low-level engineering parameters for the core services, derived from the source code implementation.
+
+### 3.1 API Service (`src/main.rs`)
+*   **Server Engine**: `axum` (built on `hyper` and `tower`).
+*   **Connection Resilience**:
+    *   **Retry Loop**: Implements a hard 15-attempt retry loop for initial Database Connection.
+    *   **Delay**: 2-second linear backoff between attempts.
+*   **Database Pooling (Supabase Optimized)**:
+    *   **Pool Size**: Max `5` concurrent connections (Optimized for Transaction Pooler constraints).
+    *   **Statement Cache**: `statement_cache_capacity(0)` (Explicitly disabled to prevent prepared statement ambiguity in PgBouncer).
+    *   **Connection Lifecycle**: Executes `DEALLOCATE ALL` on every new connection acquisition to ensure a clean session state.
+*   **Documentation**: Autosurfaces OpenAPI (Swagger) specs at `/rust-crawler-swagger`.
+
+### 3.2 Browser Engine (`src/crawler.rs`)
+*   **Launch Strategy**:
+    *   **Mode**: `headless=new` (Chrome's modern headless implementation).
+    *   **Isolation**: `--incognito` (Prevents cache/cookie leakage between sessions).
+    *   **Metrics**: `--disable-dev-shm-usage` (Prevents crashes in Docker/Low-memory environments).
+*   **Proxy Integration**:
+    *   **Rotation**: Atomic Round-Robin (`PROXY_MANAGER.get_next_proxy()`).
+    *   **Authentication**: Dynamically generates a temporary Chrome Extension (`manifest.json` + `background.js`) to inject `webRequest` headers for proxy auth, bypassing basic browser prompt limitations.
+*   **Evasion Mechanics**:
+    *   **Mouse**: Simulates Bezier-curve-like human movement from point A to B using CDP Input events.
+    *   **Fingerprinting**: Overrides Timezone (`Asia/Yangon`) and Locale (`en-US`) to match specific residential IP profiles.
+
+### 3.3 Database Schema Evolution (`src/db.rs`)
+*   **Migration Pattern**: "Code-First Schema Evolution".
+*   **Startup Check**:
+    1.  Creates base `tasks` table if missing.
+    2.  Iteratively executes `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` for:
+        *   `emails`, `phone_numbers`, `outbound_links` (JSONB)
+        *   `marketing_data`, `entities` (JSONB)
+        *   `sentiment`, `category` (TEXT)
+    *   **Why**: Allows the application to upgrade the database schema automatically without external migration tools like Flyway.
+
+---
+
+## 4. Workflow Lifecycle (The 5 Phases)
 
 ### Phase 1: Ingestion & Validation
 1.  **Request**: `POST /crawl` payload validted by Axum `Json<CrawlRequest>` extractor.
@@ -151,7 +190,7 @@ When the worker extracts text, the following specific sequence occurs:
 
 ---
 
-## 4. Sequence Diagram: The Life of a Crawl
+## 5. Sequence Diagram: The Life of a Crawl
 
 ```mermaid
 sequenceDiagram
@@ -170,7 +209,7 @@ sequenceDiagram
     A->>U: 200 OK (task_id)
     
     Note right of R: 2. Async Execution
-    W->>R: BLPOP (Wait...)
+    W->>R: RPOP (Poll...)
     R-->>W: Job Payload
     W->>W: Load cookies.json (FS)
     
@@ -200,7 +239,7 @@ sequenceDiagram
 
 ---
 
-## 5. Database Schema Reference (The Result)
+## 6. Database Schema Reference (The Result)
 
 Data is stored in the `tasks` table. We use `JSONB` for schema-less flexibility required by varying web structures.
 
