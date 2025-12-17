@@ -17,6 +17,8 @@ venv/
 # Database
 *.db
 *.sqlite
+*.sql
+local_tasks_dump.sql
 
 # Data
 crawled_data/
@@ -37,9 +39,14 @@ rust-crawler/debug/
 rust-crawler/logs/
 rust-crawler/crawl-results/
 crawl-results/
+rust-crawler/cookies.json
+rust-crawler/cookies.lock
 
 # Docker Volumes
 postgres_data/
 caddy_data/
 caddy_config/
 docker-compose.woodpecker.yml
+
+# VPN Config (Sensitive)
+vpn_enhanced_deploy/config.json

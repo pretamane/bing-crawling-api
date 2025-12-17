@@ -5,8 +5,10 @@ import json
 from sqlalchemy.orm import Session
 from crawler import process_crawl_task
 from database import init_db, get_db, Task
+import ml_api
 
-app = FastAPI(docs_url=None, redoc_url=None)
+app = FastAPI(docs_url="/docs", redoc_url=None)
+app.include_router(ml_api.router)
 
 # Initialize DB on startup
 init_db()

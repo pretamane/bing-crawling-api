@@ -9,3 +9,9 @@ tenacity
 pytest
 httpx
 trafilatura
+spacy
+scikit-learn
+numpy
+uvicorn[standard]
+fastapi
+python-multipart
