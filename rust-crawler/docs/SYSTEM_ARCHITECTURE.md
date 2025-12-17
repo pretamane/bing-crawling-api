@@ -8,37 +8,37 @@ The system utilizes a **Microservices-inspired Event-Driven Architecture**. It s
 ### Service Interaction Map
 ```mermaid
 graph TD
-    User([User/Client]) -->|HTTP/1.1 POST JSON| API[Axum API Server]
+    User(["User/Client"]) -->|"HTTP/1.1 POST JSON"| API["Axum API Server"]
     
     subgraph "Infrastructure Layer"
-        Redis[(Redis 7.x Queue)] 
-        DB[(Supabase PostgreSQL 15)]
+        Redis[("Redis 7.x Queue")] 
+        DB[("Supabase PostgreSQL 15")]
     end
     
     subgraph "Execution Plane (The Muscle)"
-        Worker[Rust Worker Service]
-        Chrome[Headless Chrome V8]
+        Worker["Rust Worker Service"]
+        Chrome["Headless Chrome V8"]
     end
 
     subgraph "Intelligence Plane (The Brain)"
-        Python[Python ML Sidecar]
-        Model1[Spacy NER (en_core_web_sm)]
-        Model2[FastText Classifier]
-        Python -->|Locally Loaded| Model1
-        Python -->|Locally Loaded| Model2
+        Python["Python ML Sidecar"]
+        Model1["Spacy NER (en_core_web_sm)"]
+        Model2["FastText Classifier"]
+        Python -->|"Locally Loaded"| Model1
+        Python -->|"Locally Loaded"| Model2
     end
     
     %% Communication Protocols
-    API -->|TCP/RESP :6379 (RPUSH)| Redis
-    API -->|TCP/Postgres :6543 (Pool)| DB
+    API -->|"TCP/RESP :6379 (RPUSH)"| Redis
+    API -->|"TCP/Postgres :6543 (Pool)"| DB
     
-    Worker -->|TCP/RESP :6379 (BLPOP)| Redis
-    Worker -->|WebSocket/CDP :9222| Chrome
-    Worker -->|HTTP/REST :8000| Python
-    Worker -->|TCP/Postgres :6543 (Pool)| DB
+    Worker -->|"TCP/RESP :6379 (BLPOP)"| Redis
+    Worker -->|"WebSocket/CDP :9222"| Chrome
+    Worker -->|"HTTP/REST :8000"| Python
+    Worker -->|"TCP/Postgres :6543 (Pool)"| DB
     
-    Chrome -->|HTTPS/TLS 1.3| Internet(Target Websites)
-    Worker -.->|File I/O| Cookies[cookies.json]
+    Chrome -->|"HTTPS/TLS 1.3"| Internet("Target Websites")
+    Worker -.->|"File I/O"| Cookies["cookies.json"]
 ```
 
 ---
