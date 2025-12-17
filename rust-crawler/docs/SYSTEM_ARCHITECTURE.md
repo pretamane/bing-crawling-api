@@ -23,7 +23,7 @@ graph TD
     subgraph "Intelligence Plane (The Brain)"
         Python["Python ML Sidecar"]
         Model1["Spacy NER (en_core_web_sm)"]
-        Model2["FastText Classifier"]
+        Model2["Scikit-Learn Classifier (NB)"]
         Python -->|"Locally Loaded"| Model1
         Python -->|"Locally Loaded"| Model2
     end
@@ -84,11 +84,29 @@ graph TD
 ### 2.3 The Intelligence Plane (AI/ML)
 *   **Communication**: Internal HTTP/1.1 REST (`reqwest` -> `FastAPI`).
 *   **Latency**: ~50-200ms per inference.
-*   **Models**:
-    *   **NER**: Spacy `en_core_web_sm` (Small, efficient) for identifying `ORG`, `PERSON`, `GPE`.
-    *   **Classification**: Pre-trained FastText or Zero-Shot Transformer (depending on config).
+*   **Models Details**:
+    *   **NER (Named Entity Recognition)**: 
+        *   **Library**: `spaCy`.
+        *   **Model**: `en_core_web_sm` (Small English pipeline).
+        *   **Labels**: Extracts `PERSON`, `ORG`, `GPE`, `LOC`, `PRODUCT`, `EVENT`.
+    *   **Classification**: 
+        *   **Library**: `scikit-learn`.
+        *   **Algorithm**: `MultinomialNB` (Naive Bayes).
+        *   **Pipeline**: `CountVectorizer` (Bag of Words) -> `MultinomialNB`.
+        *   **Note**: Currently uses an in-memory trained dummy model on startup for demonstration. Production ready for pickle-file loading.
 *   **Schema (Internal API)**:
-    *   **POST /ml/ner**: `{"text": "..."}` -> `{"entities": [{"text": "SpaceX", "label": "ORG", "start": 0, "end": 6}]}`
+    *   **POST /ml/ner**: `{"text": "..."}` -> `{"entities": [{"text": "SpaceX", "label": "ORG"}]}`
+    *   **POST /ml/classify**: `{"text": "..."}` -> `{"category": "Tech", "confidence": 0.95}`
+
+### 2.4 ML Data Flow (Deep Details)
+When the worker extracts text, the following specific sequence occurs:
+1.  **Text Sanitization**: Rust strips HTML tags and normalizes whitespace.
+2.  **Serialization**: The text string is JSON-encoded (e.g., `{"text": "Apple released... "}`).
+3.  **Transport**: Sent via `POST` to `http://localhost:8000/ml/...`.
+4.  **Inference (Python)**:
+    *   **Spacy**: Tokenizes -> Tagger ->  Parser -> NER. This runs on CPU.
+    *   **Sklearn**: Vectorizes (maps words to integers) -> Predicts Probabilities -> Returns `argmax` category.
+5.  **Deserialization**: Rust parses the JSON response into typed Structs (`Vec<Entity>`, `ClassificationResponse`).
 
 ---
 
